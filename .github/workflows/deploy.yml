@@ -39,15 +39,15 @@ jobs:
           push: true
           provenance: false
           tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME || 'freakyfit-backend' }}:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME || 'freakyfit-backend' }}:latest
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME || 'media-extractor' }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME || 'media-extractor' }}:latest
 
       - name: Update Worker Lambda Function
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME || 'freakyfit-backend' }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME || 'media-extractor' }}
           IMAGE_TAG: ${{ github.sha }}
-          WORKER_LAMBDA_NAME: ${{ secrets.WORKER_LAMBDA_NAME || 'freakyfit-worker' }}
+          WORKER_LAMBDA_NAME: ${{ secrets.WORKER_LAMBDA_NAME || 'media-extractor-worker' }}
         run: |
           if aws lambda get-function --function-name "$WORKER_LAMBDA_NAME" > /dev/null 2>&1; then
             echo "Updating Lambda function: $WORKER_LAMBDA_NAME"
@@ -69,9 +69,9 @@ jobs:
       - name: Update API Lambda Function (Optional)
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME || 'freakyfit-backend' }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME || 'media-extractor' }}
           IMAGE_TAG: ${{ github.sha }}
-          API_LAMBDA_NAME: ${{ secrets.API_LAMBDA_NAME || 'freakyfit-api' }}
+          API_LAMBDA_NAME: ${{ secrets.API_LAMBDA_NAME || 'media-extractor-api' }}
         run: |
           if aws lambda get-function --function-name "$API_LAMBDA_NAME" > /dev/null 2>&1; then
             echo "Updating API Lambda function: $API_LAMBDA_NAME"

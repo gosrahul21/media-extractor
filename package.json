@@ -1,5 +1,5 @@
 {
-  "name": "freakyfit-media-extractor",
+  "name": "media-extractor",
   "version": "1.0.0",
   "description": "Standalone Media Downloader, S3 Storage & Gemini Video Extraction Service",
   "main": "server.js",
