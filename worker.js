@@ -38,7 +38,7 @@ export const handler = async (event, context) => {
         bucket,
         prefix,
         deleteFromS3 = false,
-        uploadToGemini: wantGemini = true,
+        uploadToGemini: wantGemini = false,
         label = 'workout_extraction'
       } = payload;
 
