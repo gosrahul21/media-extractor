@@ -156,6 +156,40 @@ export const handler = async (event, context) => {
     return { statusCode: 200, body: 'Batch processing finished' };
   }
 
-  // 2. Otherwise, route HTTP request through Express
-  return httpHandler(event, context);
+  // 2. Direct health check shortcut (handles Function URL, API Gateway, and raw Lambda console test events)
+  const reqPath = event?.rawPath || event?.path || event?.requestContext?.http?.path;
+  if (reqPath === '/health' || reqPath === '/health/' || reqPath === '/') {
+    return {
+      statusCode: 200,
+      headers: {
+        'content-type': 'application/json',
+        'access-control-allow-origin': '*'
+      },
+      body: JSON.stringify({
+        success: true,
+        service: 'media-extractor',
+        health: 'ok',
+        timestamp: new Date().toISOString()
+      })
+    };
+  }
+
+  // 3. Otherwise, route HTTP request through Express with error boundary
+  try {
+    return await httpHandler(event, context);
+  } catch (httpErr) {
+    console.error('[Worker] HTTP handler error:', httpErr);
+    return {
+      statusCode: 500,
+      headers: {
+        'content-type': 'application/json',
+        'access-control-allow-origin': '*'
+      },
+      body: JSON.stringify({
+        success: false,
+        error: 'Internal Server Error',
+        message: httpErr.message
+      })
+    };
+  }
 };

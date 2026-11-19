@@ -9,6 +9,8 @@ export const configService = {
    * Get configuration value by key (with memory caching)
    */
   async get(key) {
+    if (!supabase) return null;
+
     const cached = cache.get(key);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
       return cached.value;
@@ -41,6 +43,11 @@ export const configService = {
    * Set / Rotate configuration value
    */
   async set(key, value) {
+    if (!supabase) {
+      console.warn('[ConfigService] Cannot set config: Supabase not configured.');
+      return null;
+    }
+
     const { data, error } = await supabase
       .from('app_config')
       .upsert({
