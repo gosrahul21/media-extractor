@@ -1,27 +1,14 @@
 import path from 'path';
-import fs from 'fs';
-import { downloadMedia, detectPlatform } from '../services/downloadVideo.js';
 import { s3Service } from '../services/s3Service.js';
-import { uploadToGemini } from '../services/uploadToGemini.js';
-import { sqsService } from '../services/sqsService.js';
-import { supabase } from '../config/supabaseClient.js';
+import { processMediaPipeline } from '../services/mediaPipeline.js';
+import { detectPlatform } from '../services/downloadVideo.js';
 
 /**
  * Controller to download media, save to S3, optionally upload to Gemini, and notify backend SQS
  * POST /api/media/download
  */
 export const downloadAndSaveMedia = async (req, res) => {
-  const {
-    url,
-    type,
-    bucket,
-    prefix,
-    deleteFromS3 = false,
-    uploadToGemini: wantGemini = false,
-    label,
-    jobId,
-    userId
-  } = req.body;
+  const { url } = req.body || {};
 
   if (!url || typeof url !== 'string' || !url.trim()) {
     return res.status(400).json({
@@ -30,131 +17,15 @@ export const downloadAndSaveMedia = async (req, res) => {
     });
   }
 
-  const isTemporary = Boolean(deleteFromS3 || label === 'workout_extraction');
-  const targetPrefix = prefix || (isTemporary ? 'temp/workouts' : 'media');
-  const shouldUploadToGemini = Boolean(wantGemini || label === 'workout_extraction');
-
-  let localDownloadedPath = null;
-
   try {
-    // 1. Download media (video or image) using unified downloadVideo service
-    const downloaded = await downloadMedia({
-      url: url.trim(),
-      type: type || 'auto'
-    });
-
-    localDownloadedPath = downloaded.filePath;
-
-    // 2. (Optional) Upload to Gemini File API if requested or for workout extraction
-    let geminiFile = null;
-    if (shouldUploadToGemini && downloaded.mediaType === 'video' && process.env.GEMINI_API_KEY) {
-      try {
-        console.log(`[MediaController] Uploading video to Gemini File API for workout extraction...`);
-        geminiFile = await uploadToGemini(downloaded.filePath, path.basename(downloaded.filePath));
-      } catch (geminiErr) {
-        console.warn('[MediaController] Gemini upload error (proceeding with S3 upload):', geminiErr.message);
-      }
-    }
-
-    // 3. Format S3 Key
-    const cleanPrefix = targetPrefix.replace(/^\/+|\/+$/g, '');
-    const filename = path.basename(downloaded.filePath);
-    const s3Key = `${cleanPrefix}/${filename}`;
-
-    console.log(`[MediaController] Uploading downloaded ${downloaded.platform} ${downloaded.mediaType} to S3: ${s3Key}`);
-
-    // 4. Upload to AWS S3 with tagging & metadata
-    const uploadResult = await s3Service.uploadFile({
-      filePath: downloaded.filePath,
-      key: s3Key,
-      contentType: downloaded.contentType,
-      bucket,
-      tagging: isTemporary ? 'deleteAfterExtraction=true&purpose=workout_extraction' : undefined,
-      metadata: {
-        platform: downloaded.platform,
-        media_type: downloaded.mediaType,
-        original_url: url.trim(),
-        delete_after_extraction: String(isTemporary),
-        ...(label ? { label } : {}),
-        ...(userId ? { user_id: String(userId) } : {})
-      }
-    });
-
-    // 5. Notify freakyfit-backend SQS queue if configured and jobId is provided
-    if (sqsService.isBackendQueueConfigured() && jobId) {
-      await sqsService.dispatchToBackend({
-        jobId,
-        userId,
-        url: url.trim(),
-        geminiFileUri: geminiFile?.uri || null,
-        geminiFileName: geminiFile?.name || null,
-        s3Key: uploadResult.key,
-        s3Url: uploadResult.s3Url,
-        deleteFromS3: isTemporary,
-        platform: downloaded.platform,
-        title: downloaded.title
-      });
-    }
-
-    return res.status(201).json({
-      success: true,
-      platform: downloaded.platform,
-      mediaType: downloaded.mediaType,
-      key: uploadResult.key,
-      bucket: uploadResult.bucket,
-      s3Url: uploadResult.s3Url,
-      contentType: uploadResult.contentType,
-      fileSize: uploadResult.size,
-      title: downloaded.title,
-      originalUrl: url.trim(),
-      deleteFromS3: isTemporary,
-      geminiFileUri: geminiFile?.uri || null,
-      geminiFileName: geminiFile?.name || null
-    });
-
+    const result = await processMediaPipeline(req.body);
+    return res.status(201).json(result);
   } catch (error) {
-    console.error('[MediaController] Download & Save error:', error);
-
-    // If jobId was provided, dispatch failure notification to backend SQS
-    if (jobId && sqsService.isBackendQueueConfigured()) {
-      sqsService.dispatchFailureToBackend({
-        jobId,
-        userId,
-        url,
-        error,
-        platform: detectPlatform(url)
-      }).catch(e => console.warn('[MediaController] SQS failure dispatch warning:', e.message));
-    }
-
-    // Directly update Supabase processing_jobs state
-    if (jobId) {
-      supabase
-        .from('processing_jobs')
-        .update({
-          state: 'failed',
-          failed_reason: error.message || 'Media extraction failed',
-          error: { message: error.message },
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', jobId)
-        .then(() => {})
-        .catch(e => console.warn('[MediaController] Supabase update warning:', e.message));
-    }
-
     return res.status(500).json({
       success: false,
       error: error.message || 'Failed to download media and upload to S3',
       platform: detectPlatform(url)
     });
-  } finally {
-    // 6. Ensure temporary local file is cleaned up from /tmp
-    if (localDownloadedPath && fs.existsSync(localDownloadedPath)) {
-      try {
-        fs.unlinkSync(localDownloadedPath);
-      } catch (cleanErr) {
-        console.warn('[MediaController] Error cleaning up file:', cleanErr.message);
-      }
-    }
   }
 };
 
