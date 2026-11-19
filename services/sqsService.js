@@ -58,5 +58,49 @@ export const sqsService = {
     const response = await sqsClient.send(command);
     console.log(`[SQSService] Dispatched extraction result for job ${jobId} to backend SQS: ${response.MessageId}`);
     return response;
+  },
+
+  /**
+   * Dispatch failure event back to freakyfit-backend's SQS
+   */
+  async dispatchFailureToBackend({
+    jobId,
+    userId,
+    url,
+    error,
+    platform
+  }) {
+    if (!backendQueueUrl) {
+      console.warn('[SQSService] BACKEND_SQS_QUEUE_URL is not configured. Skipping SQS failure notification.');
+      return null;
+    }
+
+    const payload = {
+      action: 'llm_workout_extraction_failed',
+      jobId,
+      userId,
+      url,
+      platform,
+      error: error?.message || String(error),
+      failedAt: new Date().toISOString()
+    };
+
+    const command = new SendMessageCommand({
+      QueueUrl: backendQueueUrl,
+      MessageBody: JSON.stringify(payload),
+      MessageAttributes: {
+        JobId: { DataType: 'String', StringValue: String(jobId || 'unknown') },
+        Action: { DataType: 'String', StringValue: 'llm_workout_extraction_failed' }
+      }
+    });
+
+    try {
+      const response = await sqsClient.send(command);
+      console.log(`[SQSService] Dispatched failure for Job ${jobId} to backend SQS: ${response.MessageId}`);
+      return response;
+    } catch (err) {
+      console.error(`[SQSService] Error dispatching failure to backend SQS:`, err);
+      return null;
+    }
   }
 };

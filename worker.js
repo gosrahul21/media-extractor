@@ -6,6 +6,7 @@ import { downloadMedia } from './services/downloadVideo.js';
 import { s3Service } from './services/s3Service.js';
 import { uploadToGemini } from './services/uploadToGemini.js';
 import { sqsService } from './services/sqsService.js';
+import { supabase } from './config/supabaseClient.js';
 
 const httpHandler = serverlessExpress({ app });
 
@@ -107,6 +108,39 @@ export const handler = async (event, context) => {
 
       } catch (err) {
         console.error(`[Worker] Error processing job ${jobId}:`, err);
+
+        // 1. Dispatch failure payload to backend SQS
+        if (sqsService.isBackendQueueConfigured()) {
+          try {
+            await sqsService.dispatchFailureToBackend({
+              jobId,
+              userId,
+              url,
+              error: err,
+              platform: payload?.platform
+            });
+          } catch (sqsErr) {
+            console.error(`[Worker] Failed to dispatch failure to SQS for job ${jobId}:`, sqsErr.message);
+          }
+        }
+
+        // 2. Directly update Supabase processing_jobs state so client/UI reflects failure immediately
+        if (jobId) {
+          try {
+            await supabase
+              .from('processing_jobs')
+              .update({
+                state: 'failed',
+                failed_reason: err.message || 'Media extraction failed',
+                error: { message: err.message, stack: err.stack },
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', jobId);
+            console.log(`[Worker] Updated Supabase job ${jobId} to failed state.`);
+          } catch (dbErr) {
+            console.warn(`[Worker] Failed to update Supabase error state for job ${jobId}:`, dbErr.message);
+          }
+        }
       } finally {
         // Step E: Clean up local disk file in /tmp
         if (localDownloadedPath && fs.existsSync(localDownloadedPath)) {

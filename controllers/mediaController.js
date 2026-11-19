@@ -4,6 +4,7 @@ import { downloadMedia, detectPlatform } from '../services/downloadVideo.js';
 import { s3Service } from '../services/s3Service.js';
 import { uploadToGemini } from '../services/uploadToGemini.js';
 import { sqsService } from '../services/sqsService.js';
+import { supabase } from '../config/supabaseClient.js';
 
 /**
  * Controller to download media, save to S3, optionally upload to Gemini, and notify backend SQS
@@ -113,6 +114,33 @@ export const downloadAndSaveMedia = async (req, res) => {
 
   } catch (error) {
     console.error('[MediaController] Download & Save error:', error);
+
+    // If jobId was provided, dispatch failure notification to backend SQS
+    if (jobId && sqsService.isBackendQueueConfigured()) {
+      sqsService.dispatchFailureToBackend({
+        jobId,
+        userId,
+        url,
+        error,
+        platform: detectPlatform(url)
+      }).catch(e => console.warn('[MediaController] SQS failure dispatch warning:', e.message));
+    }
+
+    // Directly update Supabase processing_jobs state
+    if (jobId) {
+      supabase
+        .from('processing_jobs')
+        .update({
+          state: 'failed',
+          failed_reason: error.message || 'Media extraction failed',
+          error: { message: error.message },
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', jobId)
+        .then(() => {})
+        .catch(e => console.warn('[MediaController] Supabase update warning:', e.message));
+    }
+
     return res.status(500).json({
       success: false,
       error: error.message || 'Failed to download media and upload to S3',

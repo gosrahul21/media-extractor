@@ -183,6 +183,37 @@ async function runTests() {
     s3Service.uploadFile = originalUpload;
     console.log('   SQS notification passed!');
 
+    // 8. Testing SQS Failure Notification
+    console.log('8. Testing SQS Failure notification to backend on download error...');
+    let failureDispatched = null;
+    const originalFailureDispatch = sqsService.dispatchFailureToBackend;
+    sqsService.isBackendQueueConfigured = () => true;
+    sqsService.dispatchFailureToBackend = async (payload) => {
+      failureDispatched = payload;
+      return { MessageId: 'msg-failure-test-id' };
+    };
+
+    const resFailurePost = await fetch(`${baseUrl}/api/media/download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: 'https://invalid-non-existent-domain-12345.xyz/video.mp4',
+        type: 'video',
+        jobId: 'failed-job-999',
+        userId: 'user-xyz'
+      })
+    });
+
+    assert.strictEqual(resFailurePost.status, 500);
+    assert.ok(failureDispatched, 'Failure payload should be dispatched to SQS');
+    assert.strictEqual(failureDispatched.jobId, 'failed-job-999');
+    assert.strictEqual(failureDispatched.userId, 'user-xyz');
+    assert.ok(failureDispatched.error, 'Error message must be present in failure payload');
+
+    sqsService.isBackendQueueConfigured = originalIsConfigured;
+    sqsService.dispatchFailureToBackend = originalFailureDispatch;
+    console.log('   SQS failure notification passed!');
+
     console.log('\n ALL TESTS PASSED SUCCESSFULLY! ');
   } finally {
     server.close();
